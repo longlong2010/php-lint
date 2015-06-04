@@ -1,13 +1,12 @@
 <?php
 require(__DIR__ . '/require' . '.php');
 //require('require.php');
-class Memcached {
-}
 
 function f($b) {
 	
 }
 $o = new Memcached();
+$o->get('abc');
 $o = 7;
 $o = 7 * 2;
 k();
@@ -20,6 +19,9 @@ class A {
 		return $y;
 	}
 }
+
+$a = new A();
+$a->f();
 echo "123";
 while (1)
 	$i++;
