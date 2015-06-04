@@ -1,7 +1,7 @@
 <?php
 require(__DIR__ . '/require' . '.php');
 //require('require.php');
-
+$u = array();
 function f($b) {
 	
 }
@@ -11,6 +11,9 @@ $o = 7;
 $o = 7 * 2;
 k();
 class A {
+	public $a;
+	public static $b;
+	private $c = array(1, 2, 3);
 	public function f() {
 	}
 

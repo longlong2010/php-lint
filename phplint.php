@@ -59,6 +59,8 @@ function parse_assign($assign, &$vars, $classes) {
 			}
 			$vars[$name]['t'] = $t; 
 			break;
+		case 'PhpParser\Node\Expr\Array_':
+			break;
 	}
 }
 
@@ -126,16 +128,26 @@ function parse_class($class, &$classes) {
 	if ($classes[$name] || class_exists($name)) {
 		//类重复定义			
 	}
+	$methods = array();
+	$properties = array();
 
 	foreach ($class->stmts as $stmt) {
 		$c = get_class($stmt);
 		switch ($c) {
 			case 'PhpParser\Node\Stmt\ClassMethod':
 				parse_method($class, $stmt);
+				$n = strtolower($stmt->name);
+				$methods[$n] = $stmt;
+				break;
+			case 'PhpParser\Node\Stmt\Property':
+				$n = $stmt->props[0]->name;
+				$properties[$n] = $stmt;
 				break;
 		}
 	}
 	$classes[$name]['v'] = $class;
+	$classes[$name]['methods'] = $methods;
+	$classes[$name]['properties'] = $properties;
 }
 
 function parse_method($class, $method) {
