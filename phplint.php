@@ -7,11 +7,7 @@ $functions = array();
 
 parse_file($argv[1], $vars, $classes, $functions);
 
-function parse_file($file, &$vars, &$classes, &$functions) {
-	$code = file_get_contents($file);
-	$parser = new PhpParser\Parser(new PhpParser\Lexer);
-	$stmts = $parser->parse($code);
-	parse_stmts($stmts, $vars, $classes, $functions, $file);
+function check_unused_variable($vars) {
 	foreach ($vars as $n => $var) {
 		if ($var['c'] <= 1) {
 			print_error("Unused variable \${$n}", $file, $var['v']->getAttribute('startLine', -1));
@@ -19,9 +15,17 @@ function parse_file($file, &$vars, &$classes, &$functions) {
 	}
 }
 
+function parse_file($file, &$vars, &$classes, &$functions) {
+	$code = file_get_contents($file);
+	$parser = new PhpParser\Parser(new PhpParser\Lexer);
+	$stmts = $parser->parse($code);
+	parse_stmts($stmts, $vars, $classes, $functions, $file);
+	check_unused_variable($vars);
+}
+
 function parse_namespace($ns, &$vars, &$classes, &$functions, $file) {
 	$name = strtolower(implode('\\', $ns->name->parts)) . '\\';
-	parse_stmts($ns->stmts, $var, $classes, $functions, $file, $name);
+	parse_stmts($ns->stmts, $vars, $classes, $functions, $file, $name);
 }
 
 function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
@@ -47,6 +51,9 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
 				break;
 			case 'PhpParser\Node\Stmt\Use_':
 				break;
+			case 'PhpParser\Node\Stmt\Echo_':
+				parse_expr($stmt->expr, $file);
+				break;
 			case 'PhpParser\Node\Expr\Assign':
 				parse_assign($stmt, $vars, $classes, $file, $ns);
 				break;
@@ -58,6 +65,9 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
 				break;
 		}
 	}
+}
+
+function parse_expr($expr, $file) {
 }
 
 function parse_include($stmt, $file) {
@@ -72,10 +82,17 @@ function parse_assign($assign, &$vars, $classes, $file, $ns = '') {
 	$c = get_class($assign->expr);
 	switch ($c) {
 		case 'PhpParser\Node\Expr\New_':
-			$t = strtolower(implode('\\', $assign->expr->class->parts));
+			switch (get_class($assign->expr->class)) {
+				case 'PhpParser\Node\Name\FullyQualified':
+					$t = strtolower(implode('\\', $assign->expr->class->parts));
+					break;
+				case 'PhpParser\Node\Name':
+					$t = $ns . strtolower($assign->expr->class->parts[0]);
+					break;
+			}
 			if (!$classes[$t] && !class_exists($t))	{
 				//实例化不存在的类
-				print_error("Class '{$name}' not found", $file, $assign->getAttribute('startLine', -1));
+				print_error("Class '{$t}' not found", $file, $assign->getAttribute('startLine', -1));
 			}
 			$vars[$name]['t'] = $t;
 			break;
@@ -103,7 +120,7 @@ function parse_function($fun, &$functions, $file, $ns = '') {
 	$functions[$name] = $fun;
 
 	parse_stmts($fun->stmts, $vars, $classes, $funs, $file);
-
+	check_unused_variable($vars);
 }
 
 function parse_call($call, &$vars, $functions, $file, $ns) {
@@ -206,6 +223,7 @@ function parse_method($class, $method, $file) {
 		$vars[$name]['c']++;
 	}
 	parse_stmts($method->stmts, $vars, $classes, $functions, $file);
+	check_unused_variable($vars);
 }
 
 function print_error($error, $file, $line) {

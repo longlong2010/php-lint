@@ -2,15 +2,24 @@
 namespace My\A;
 require(__DIR__ . '/require' . '.php');
 use My\A\A;
+$a = new \Memcached();
+$a = new \Memcached();
+$p = 3;
 $v = 1;
 $u = 2;
 function g($a, $b) {
+	echo $a;
 }
 g($v, $u);
 
 class A {
+	private $a;
+	public function f() {
+		echo $this->a;
+	}
 }
 //require('require.php');
+$a = new A();
 $a = new \My\A\A();
 $u = new \Memcached();
 $o = new Memcached();
