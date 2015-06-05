@@ -1,6 +1,28 @@
 <?php
+namespace My\A;
 require(__DIR__ . '/require' . '.php');
+use My\A\A;
+$v = 1;
+$u = 2;
+function g($a, $b) {
+}
+g($v, $u);
+
+class A {
+}
 //require('require.php');
+$a = new \My\A\A();
+$u = new \Memcached();
+$o = new Memcached();
+
+$o->get();
+class A {
+}
+$o = new A();
+$o->get();
+class A {
+}
+$m = new abc();
 $u = array();
 function f($b) {
 	
