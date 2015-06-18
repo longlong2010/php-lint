@@ -17,6 +17,10 @@ class A {
 	public function f() {
 		echo $this->a;
 	}
+
+	public function g() {
+		$this->f();
+	}
 }
 //require('require.php');
 $a = new A();
@@ -40,6 +44,7 @@ $o = new Memcached();
 $o->get('abc');
 $o = 7;
 $o = 7 * 2;
+function k() {}
 k();
 class A {
 	public $a;

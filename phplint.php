@@ -28,7 +28,7 @@ function parse_namespace($ns, &$vars, &$classes, &$functions, $file) {
 	parse_stmts($ns->stmts, $vars, $classes, $functions, $file, $name);
 }
 
-function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
+function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $class = '') {
 	foreach ($stmts as $stmt) {
 		$c = get_class($stmt);
 		switch ($c) {
@@ -52,7 +52,7 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
 			case 'PhpParser\Node\Stmt\Use_':
 				break;
 			case 'PhpParser\Node\Stmt\Echo_':
-				parse_expr($stmt->expr, $file);
+				parse_exprs($stmt->exprs, $vars, $file);
 				break;
 			case 'PhpParser\Node\Expr\Assign':
 				parse_assign($stmt, $vars, $classes, $file, $ns);
@@ -61,13 +61,27 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '') {
 				parse_call($stmt, $vars, $functions, $file, $ns);
 				break;
 			case 'PhpParser\Node\Expr\MethodCall':
-				parse_method_call($stmt, $vars, $classes, $file);
+				parse_method_call($stmt, $vars, $classes, $file, $class);
 				break;
 		}
 	}
 }
 
-function parse_expr($expr, $file) {
+function parse_exprs($exprs, &$vars, $file) {
+	foreach ($exprs as $expr) {
+		$c = get_class($expr);
+		switch ($c) {
+			case 'PhpParser\Node\Expr\Variable':
+				$n = $expr->name;
+				if (!$vars[$n]) {
+					$vars[$n]['v'] = $expr;
+				}
+				$vars[$n]['c']++;
+				break;
+			case 'PhpParser\Node\Expr\PropertyFetch':
+				break;
+		}
+	}
 }
 
 function parse_include($stmt, $file) {
@@ -144,30 +158,32 @@ function parse_call($call, &$vars, $functions, $file, $ns) {
 	}
 }
 
-function parse_method_call($call, &$vars, $classes, $file) {
+function parse_method_call($call, &$vars, $classes, $file, $class = '') {
 	$var_name = $call->var->name;
 	$method_name = strtolower($call->name);
 	$var = $vars[$var_name];
-	if (!$var) {
+	if ($var_name == 'this' && $class) {
+
+	} else if (!$var) {
 		//调用未初始化变量的方法
 		print_error("Call to a member function {$method_name}() on null", $file, $call->getAttribute('startLine', -1));
 	} else if (!$var['t']) {
 		//调用非对象的方法
 		print_error("Call to a member function {$method_name}() on non-object", $file, $call->getAttribute('startLine', -1));
 	} else {
-		$c = $var['t'];
-		$class = $classes[$c];
-		if (!$class && !class_exists($c)) {
+		$c = $classes[$var['t']];
+		if (!$c && !class_exists($c)) {
 			//调用未知类型对象的方法
 		} else {
-			if ($class) {
-				$methods = $class['methods'];
+			if ($c) {
+				$methods = $c['methods'];
 				$m = $methods[$method_name];
 				if (!$m) {
-					print_error("Call to undefined method {$c}::{$method_name}()", $file, $call->getAttribute('startLine', -1));
+					$name = $c['v']->name;
+					print_error("Call to undefined method {$name}::{$method_name}()", $file, $call->getAttribute('startLine', -1));
 				}
 			} else {
-				$methods = get_class_methods($c);
+				$methods = get_class_methods($var['t']);
 				$n = 0;
 				foreach ($methods as $m) {
 					if ($method_name == strtolower($m)) {
@@ -177,7 +193,8 @@ function parse_method_call($call, &$vars, $classes, $file) {
 				}
 				if (!$n) {
 					//调用方法不存在
-					print_error("Call to undefined method {$c}::{$method_name}()", $file, $call->getAttribute('startLine', -1));
+					$name = $c['v']->name;
+					print_error("Call to undefined method {$name}::{$method_name}()", $file, $call->getAttribute('startLine', -1));
 				}
 			}
 		}
@@ -198,7 +215,7 @@ function parse_class($class, &$classes, $file, $ns = '') {
 		$c = get_class($stmt);
 		switch ($c) {
 			case 'PhpParser\Node\Stmt\ClassMethod':
-				parse_method($class, $stmt, $file);
+				parse_method($stmt, $file, $name);
 				$n = strtolower($stmt->name);
 				$methods[$n] = $stmt;
 				break;
@@ -213,7 +230,7 @@ function parse_class($class, &$classes, $file, $ns = '') {
 	$classes[$name]['properties'] = $properties;
 }
 
-function parse_method($class, $method, $file) {
+function parse_method($method, $file, $class) {
 	$vars = array();
 	$functions = array();
 	$classes = array();
@@ -222,7 +239,7 @@ function parse_method($class, $method, $file) {
 		$vars[$name]['v'] = $param;
 		$vars[$name]['c']++;
 	}
-	parse_stmts($method->stmts, $vars, $classes, $functions, $file);
+	parse_stmts($method->stmts, $vars, $classes, $functions, $file, '', $class);
 	check_unused_variable($vars);
 }
 
