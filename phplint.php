@@ -1,3 +1,4 @@
+#!/usr/bin/php
 <?php
 require(__DIR__ . '/lib/bootstrap.php');
 
@@ -67,7 +68,7 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 				parse_exprs($stmt->exprs, $vars, $file);
 				break;
 			case 'PhpParser\Node\Expr\Assign':
-				parse_assign($stmt, $vars, $classes, $file, $ns);
+				parse_assign($stmt, $vars, $classes, $functions, $file, $ns);
 				break;
 			case 'PhpParser\Node\Expr\FuncCall':
 				parse_call($stmt, $vars, $functions, $file, $ns);
@@ -100,7 +101,7 @@ function parse_include($stmt, $file) {
 	$expr = $stmt->expr;
 }
 
-function parse_assign($assign, &$vars, $classes, $file, $ns = '') {
+function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '') {
 	$var = $assign->var;
 	$name = $var->name;
 	$vars[$name]['c']++;
@@ -122,6 +123,8 @@ function parse_assign($assign, &$vars, $classes, $file, $ns = '') {
 			}
 			$vars[$name]['t'] = $t;
 			break;
+		case 'PhpParser\Node\Expr\FuncCall':
+			parse_call($assign->expr, $vars, $functions, $file, $ns);
 		case 'PhpParser\Node\Expr\Array_':
 		default:
 			$vars[$name]['t'] = '';
@@ -157,7 +160,7 @@ function parse_function($fun, &$functions, $file, $ns = '') {
 		$vars[$n]['c']++;
 		$vars[$n]['v'] = $param;
 	}
-
+	
 	parse_stmts($fun->stmts, $vars, $classes, $functions, $file);
 	check_unused_variable($vars);
 }
@@ -187,6 +190,21 @@ function parse_method_call($call, &$vars, $classes, $file, $class = '') {
 	$var_name = $call->var->name;
 	$method_name = strtolower($call->name);
 	$var = $vars[$var_name];
+
+	foreach ($call->args as $arg) {
+		$c = get_class($arg->value);
+		switch ($c) {
+			case 'PhpParser\Node\Expr\Variable':
+				$n = $arg->value->name;
+				if (!$vars[$n]) {
+					//传递空参数
+					$vars[$n]['v'] = $arg->value;
+				}
+				$vars[$n]['c']++;
+				break;
+		}
+	}
+
 	if ($var_name == 'this' && $class) {
 		$methods = $c['methods'];
 		$m = $methods[$method_name];
