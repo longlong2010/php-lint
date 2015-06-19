@@ -28,7 +28,19 @@ function parse_namespace($ns, &$vars, &$classes, &$functions, $file) {
 	parse_stmts($ns->stmts, $vars, $classes, $functions, $file, $name);
 }
 
-function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $class = '') {
+function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $class = null) {
+	foreach ($stmts as $stmt) {
+		$c = get_class($stmt);
+		switch ($c) {
+			case 'PhpParser\Node\Stmt\Class_':
+				parse_class_definition($stmt, $classes, $file, $ns);
+				break;
+			case 'PhpParser\Node\Stmt\Function_':
+				parse_function_definition($stmt, $functions, $file, $ns);
+				break;
+		}
+	}
+
 	foreach ($stmts as $stmt) {
 		$c = get_class($stmt);
 		switch ($c) {
@@ -39,7 +51,7 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 				parse_function($stmt, $functions, $file, $ns);
 				break;
 			case 'PhpParser\Node\Stmt\Class_':
-				parse_class($stmt, $classes, $file, $ns);
+				parse_class($stmt, $classes, $functions, $file, $ns);
 				break;
 			case 'PhpParser\Node\Expr\Include_':
 				parse_include($stmt, $file);
@@ -117,7 +129,7 @@ function parse_assign($assign, &$vars, $classes, $file, $ns = '') {
 	}
 }
 
-function parse_function($fun, &$functions, $file, $ns = '') {
+function parse_function_definition($fun, &$functions, $file, $ns = '') {
 	$name = strtolower($ns . $fun->name);
 	$vars = array();
 	$classes = array();
@@ -132,8 +144,21 @@ function parse_function($fun, &$functions, $file, $ns = '') {
 		print_error("Cannot redeclare {$name}()", $file, $fun->getAttribute('startLine', -1));
 	}
 	$functions[$name] = $fun;
+}
 
-	parse_stmts($fun->stmts, $vars, $classes, $funs, $file);
+
+function parse_function($fun, &$functions, $file, $ns = '') {
+	$name = strtolower($ns . $fun->name);
+	$vars = array();
+	$classes = array();
+	
+	foreach ($fun->params as $param) {
+		$n = $param->name;
+		$vars[$n]['c']++;
+		$vars[$n]['v'] = $param;
+	}
+
+	parse_stmts($fun->stmts, $vars, $classes, $functions, $file);
 	check_unused_variable($vars);
 }
 
@@ -163,7 +188,12 @@ function parse_method_call($call, &$vars, $classes, $file, $class = '') {
 	$method_name = strtolower($call->name);
 	$var = $vars[$var_name];
 	if ($var_name == 'this' && $class) {
-
+		$methods = $c['methods'];
+		$m = $methods[$method_name];
+		if (!$m) {
+			$name = $class['v']->name;
+			print_error("Call to undefined method {$name}::{$method_name}()", $file, $call->getAttribute('startLine', -1));
+		}
 	} else if (!$var) {
 		//调用未初始化变量的方法
 		print_error("Call to a member function {$method_name}() on null", $file, $call->getAttribute('startLine', -1));
@@ -202,7 +232,7 @@ function parse_method_call($call, &$vars, $classes, $file, $class = '') {
 	}
 }
 
-function parse_class($class, &$classes, $file, $ns = '') {
+function parse_class_definition($class, &$classes, $file, $ns = '') {
 	$name = strtolower($ns . $class->name);
 	if ($classes[$name] || class_exists($name)) {
 		//类重复定义
@@ -215,7 +245,6 @@ function parse_class($class, &$classes, $file, $ns = '') {
 		$c = get_class($stmt);
 		switch ($c) {
 			case 'PhpParser\Node\Stmt\ClassMethod':
-				parse_method($stmt, $file, $name);
 				$n = strtolower($stmt->name);
 				$methods[$n] = $stmt;
 				break;
@@ -225,15 +254,27 @@ function parse_class($class, &$classes, $file, $ns = '') {
 				break;
 		}
 	}
+
 	$classes[$name]['v'] = $class;
 	$classes[$name]['methods'] = $methods;
 	$classes[$name]['properties'] = $properties;
 }
 
-function parse_method($method, $file, $class) {
+function parse_class($class, &$classes, $functions, $file, $ns = '') {
+	$name = strtolower($ns . $class->name);
+	foreach ($class->stmts as $stmt) {
+		$c = get_class($stmt);
+		switch ($c) {
+			case 'PhpParser\Node\Stmt\ClassMethod':
+				parse_method($stmt, $classes, $functions, $file, $classes[$name]);
+				break;
+
+		}
+	}
+}
+
+function parse_method($method, $classes, $functions, $file, $class) {
 	$vars = array();
-	$functions = array();
-	$classes = array();
 	foreach ($method->params as $param) {
 		$name = $param->name;
 		$vars[$name]['v'] = $param;

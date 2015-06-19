@@ -11,7 +11,8 @@ function g($a, $b) {
 	echo $a;
 }
 g($v, $u);
-
+hh();
+function hh() {}
 class A {
 	private $a;
 	public function f() {
@@ -19,11 +20,12 @@ class A {
 	}
 
 	public function g() {
-		$this->f();
+		$this->k();
 	}
 }
 //require('require.php');
 $a = new A();
+$a->g();
 $a = new \My\A\A();
 $u = new \Memcached();
 $o = new Memcached();
