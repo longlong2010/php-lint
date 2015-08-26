@@ -2,14 +2,46 @@
 <?php
 require(__DIR__ . '/lib/PHP-Parser/lib/bootstrap.php');
 
+class VariableNodeVisitor extends PhpParser\NodeVisitorAbstract {
+	protected $vars;
+
+	public function __construct(&$vars) {
+		$this->vars = &$vars;
+	}
+
+	public function leaveNode(PhpParser\Node $node) {
+		if ($node instanceof PhpParser\Node\Expr\Variable) {
+			$n = $node->name;
+			if ($n != 'this') {
+				parse_variable($node, $this->vars);
+			}
+		}
+	}
+}
+
 $vars = array();
 $classes = array();
 $functions = array();
 
 parse_file($argv[1], $vars, $classes, $functions);
 
-function check_unused_variable($vars) {
+function check_unused_variable($vars, $file) {
+	$super_global = array(
+			'GLOBALS' => 1, 
+			'_SERVER' => 1, 
+			'_GET' => 1, 
+			'_POST' => 1, 
+			'_FILES' => 1, 
+			'_COOKIE' => 1, 
+			'_SESSION' => 1, 
+			'_REQUEST' => 1, 
+			'_ENV' => 1, 
+			'argv' => 1);
+
 	foreach ($vars as $n => $var) {
+		if ($super_global[$n]) {
+			continue;
+		}
 		if ($var['c'] <= 1) {
 			print_error("Unused variable \${$n}", $file, $var['v']->getAttribute('startLine', -1));
 		}
@@ -18,10 +50,10 @@ function check_unused_variable($vars) {
 
 function parse_file($file, &$vars, &$classes, &$functions) {
 	$code = file_get_contents($file);
-	$parser = new PhpParser\Parser(new PhpParser\Lexer);
+	$parser = new PhpParser\Parser(new PhpParser\Lexer());
 	$stmts = $parser->parse($code);
 	parse_stmts($stmts, $vars, $classes, $functions, $file);
-	check_unused_variable($vars);
+	check_unused_variable($vars, $file);
 }
 
 function parse_namespace($ns, &$vars, &$classes, &$functions, $file) {
@@ -49,7 +81,7 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 				parse_namespace($stmt, $vars, $classes, $functions, $file);
 				break;
 			case 'PhpParser\Node\Stmt\Function_':
-				parse_function($stmt, $functions, $file, $ns);
+				parse_function($stmt, $functions, $file);
 				break;
 			case 'PhpParser\Node\Stmt\Class_':
 				parse_class($stmt, $classes, $functions, $file, $ns);
@@ -58,17 +90,42 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 				parse_include($stmt, $file);
 				break;
 			case 'PhpParser\Node\Stmt\For_':
+				parse_stmts($stmt->init, $vars, $classes, $functions, $file, $ns, $class);
+				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				break;
+			case 'PhpParser\Node\Stmt\Foreach_':
+				parse_exprs(array($stmt->expr), $vars, $file, $class);
+				if ($stmt->keyVar) {
+					parse_variable($stmt->keyVar, $vars, $file);
+				}
+				parse_variable($stmt->valueVar, $vars, $file);
+				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				break;
 			case 'PhpParser\Node\Stmt\While_':
+				parse_exprs(array($stmt->cond), $vars, $file, $class);
+				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				break;
 			case 'PhpParser\Node\Stmt\If_':
-				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns);
+				parse_exprs(array($stmt->cond), $vars, $file, $class);
+				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				if ($stmt->else) {
+					parse_stmts($stmt->else->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				}
+				break;
+			case 'PhpParser\Node\Stmt\Switch_':
+				parse_exprs(array($stmt->cond), $vars, $file, $class);
+				foreach ($stmt->cases as $case) {
+					parse_stmts($case->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				}
 				break;
 			case 'PhpParser\Node\Stmt\Use_':
 				break;
 			case 'PhpParser\Node\Stmt\Echo_':
-				parse_exprs($stmt->exprs, $vars, $file);
+				parse_exprs($stmt->exprs, $vars, $file, $class);
 				break;
 			case 'PhpParser\Node\Expr\Assign':
-				parse_assign($stmt, $vars, $classes, $functions, $file, $ns);
+			case 'PhpParser\Node\Expr\AssignRef':
+				parse_assign($stmt, $vars, $classes, $functions, $file, $ns, $class);
 				break;
 			case 'PhpParser\Node\Expr\FuncCall':
 				parse_call($stmt, $vars, $functions, $file, $ns);
@@ -76,45 +133,62 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 			case 'PhpParser\Node\Expr\MethodCall':
 				parse_method_call($stmt, $vars, $classes, $file, $class);
 				break;
+			case 'PhpParser\Node\Stmt\Return_':
+				parse_exprs(array($stmt->expr), $vars, $file, $class);
+				break;
+			case 'PhpParser\Node\Expr\PostInc':
+			case 'PhpParser\Node\Expr\PostDec':
+				parse_exprs(array($stmt->var), $vars, $file, $class);
+				break;
 		}
 	}
 }
 
-function parse_exprs($exprs, &$vars, $file) {
+function parse_include() {
+}
+
+function parse_exprs($exprs, &$vars, $file, $class = null) {
+	$traverser = new PhpParser\NodeTraverser();
+	$traverser->addVisitor(new VariableNodeVisitor($vars));	
 	foreach ($exprs as $expr) {
 		$c = get_class($expr);
 		switch ($c) {
-			case 'PhpParser\Node\Expr\Variable':
-				$n = $expr->name;
-				if (!$vars[$n]) {
-					$vars[$n]['v'] = $expr;
-				}
-				$vars[$n]['c']++;
-				break;
 			case 'PhpParser\Node\Expr\PropertyFetch':
+				if ($expr->var->name == 'this' && $class) {
+					$properties = $class['properties'];
+					$name = $expr->name;
+					if (!$properties[$name]) {
+						print_error("Use undefined property \$this->{$name}", $file, $expr->getAttribute('startLine', -1));
+					}
+				}
 				break;
+			default:
+				$traverser->traverse(array($expr));
+				
 		}
 	}
 }
 
-function parse_include($stmt, $file) {
-	$expr = $stmt->expr;
-}
-
-function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '') {
+function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '', $class = null) {
 	$var = $assign->var;
-	$name = $var->name;
-	$vars[$name]['c']++;
-	$vars[$name]['v'] = $var;
+	if ($var instanceof PhpParser\Node\Expr\Variable) {
+		parse_variable($var, $vars, $file);
+		$name = $var->name;
+	}
 	$c = get_class($assign->expr);
 	switch ($c) {
 		case 'PhpParser\Node\Expr\New_':
+			foreach ($assign->expr->args as $arg) {
+				if ($arg->value instanceof PhpParser\Node\Expr\Variable) {
+					parse_variable($arg->value, $vars, $file);
+				}
+			}
 			switch (get_class($assign->expr->class)) {
 				case 'PhpParser\Node\Name\FullyQualified':
 					$t = strtolower(implode('\\', $assign->expr->class->parts));
 					break;
 				case 'PhpParser\Node\Name':
-					$t = $ns . strtolower($assign->expr->class->parts[0]);
+					$t = $ns . strtolower(implode('\\', $assign->expr->class->parts));
 					break;
 			}
 			if (!$classes[$t] && !class_exists($t))	{
@@ -125,24 +199,17 @@ function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '') {
 			break;
 		case 'PhpParser\Node\Expr\FuncCall':
 			parse_call($assign->expr, $vars, $functions, $file, $ns);
-		case 'PhpParser\Node\Expr\Array_':
-		case 'PhpParser\Node\Expr\BinaryOp\Plus':
 		default:
-			$vars[$name]['t'] = '';
+			parse_exprs(array($assign->expr), $vars, $file, $class);
+			if ($vars[$name]) {
+				$vars[$name]['t'] = '';
+			}
 			break;
 	}
 }
 
 function parse_function_definition($fun, &$functions, $file, $ns = '') {
 	$name = strtolower($ns . $fun->name);
-	$vars = array();
-	$classes = array();
-	$funs = array();
-	foreach ($fun->params as $param) {
-		$n = $param->name;
-		$vars[$n]['c']++;
-		$vars[$n]['v'] = $param;
-	}
 	if ($functions[$name] || function_exists($name)) {
 		//方法重复定义
 		print_error("Cannot redeclare {$name}()", $file, $fun->getAttribute('startLine', -1));
@@ -151,19 +218,24 @@ function parse_function_definition($fun, &$functions, $file, $ns = '') {
 }
 
 
-function parse_function($fun, &$functions, $file, $ns = '') {
-	$name = strtolower($ns . $fun->name);
+function parse_function($fun, &$functions, $file) {
 	$vars = array();
 	$classes = array();
 	
 	foreach ($fun->params as $param) {
-		$n = $param->name;
-		$vars[$n]['c']++;
-		$vars[$n]['v'] = $param;
+		parse_variable($param, $vars);
 	}
 	
 	parse_stmts($fun->stmts, $vars, $classes, $functions, $file);
-	check_unused_variable($vars);
+	check_unused_variable($vars, $file);
+}
+
+function parse_variable($var, &$vars) {
+	$n = $var->name;
+	if (!$vars[$n]) {
+		$vars[$n]['v'] = $var;
+	}
+	$vars[$n]['c']++;
 }
 
 function parse_call($call, &$vars, $functions, $file, $ns) {
@@ -176,18 +248,16 @@ function parse_call($call, &$vars, $functions, $file, $ns) {
 		$c = get_class($arg->value);
 		switch ($c) {
 			case 'PhpParser\Node\Expr\Variable':
-				$n = $arg->value->name;
-				if (!$vars[$n]) {
-					//传递空参数
-					$vars[$n]['v'] = $arg->value;
-				}
-				$vars[$n]['c']++;
+				parse_variable($arg->value, $vars);
+				break;
+			default:
+				parse_exprs(array($arg), $vars, $file);
 				break;
 		}
 	}
 }
 
-function parse_method_call($call, &$vars, $classes, $file, $class = '') {
+function parse_method_call($call, &$vars, $classes, $file, $class = null) {
 	$var_name = $call->var->name;
 	$method_name = strtolower($call->name);
 	$var = $vars[$var_name];
@@ -196,18 +266,16 @@ function parse_method_call($call, &$vars, $classes, $file, $class = '') {
 		$c = get_class($arg->value);
 		switch ($c) {
 			case 'PhpParser\Node\Expr\Variable':
-				$n = $arg->value->name;
-				if (!$vars[$n]) {
-					//传递空参数
-					$vars[$n]['v'] = $arg->value;
-				}
-				$vars[$n]['c']++;
+				parse_variable($arg->value, $vars);
+				break;
+			case 'PhpParser\Node\Expr\New_':
+				parse_exprs(array($arg->value), $vars, $file, $class);
 				break;
 		}
 	}
 
 	if ($var_name == 'this' && $class) {
-		$methods = $c['methods'];
+		$methods = $class['methods'];
 		$m = $methods[$method_name];
 		if (!$m) {
 			$name = $class['v']->name;
@@ -287,7 +355,6 @@ function parse_class($class, &$classes, $functions, $file, $ns = '') {
 			case 'PhpParser\Node\Stmt\ClassMethod':
 				parse_method($stmt, $classes, $functions, $file, $classes[$name]);
 				break;
-
 		}
 	}
 }
@@ -300,7 +367,7 @@ function parse_method($method, $classes, $functions, $file, $class) {
 		$vars[$name]['c']++;
 	}
 	parse_stmts($method->stmts, $vars, $classes, $functions, $file, '', $class);
-	check_unused_variable($vars);
+	check_unused_variable($vars, $file);
 }
 
 function print_error($error, $file, $line) {

@@ -16,7 +16,7 @@ function hh() {}
 class A {
 	private $a;
 	public function f() {
-		echo $this->a;
+		echo $this->u;
 	}
 
 	public function g() {
