@@ -1,6 +1,7 @@
 #!/usr/bin/php
 <?php
 require(__DIR__ . '/lib/PHP-Parser/lib/bootstrap.php');
+error_reporting(E_ALL & ~E_NOTICE);
 
 class VariableNodeVisitor extends PhpParser\NodeVisitorAbstract {
 	protected $vars;
@@ -10,11 +11,9 @@ class VariableNodeVisitor extends PhpParser\NodeVisitorAbstract {
 	}
 
 	public function leaveNode(PhpParser\Node $node) {
-		if ($node instanceof PhpParser\Node\Expr\Variable) {
-			$n = $node->name;
-			if ($n != 'this') {
-				parse_variable($node, $this->vars);
-			}
+		$n = $node->name;
+		if ($n != 'this') {
+			parse_variable($node, $this->vars);
 		}
 	}
 }
@@ -81,7 +80,7 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 				parse_namespace($stmt, $vars, $classes, $functions, $file);
 				break;
 			case 'PhpParser\Node\Stmt\Function_':
-				parse_function($stmt, $functions, $file);
+				parse_function($stmt, $classes, $functions, $file);
 				break;
 			case 'PhpParser\Node\Stmt\Class_':
 				parse_class($stmt, $classes, $functions, $file, $ns);
@@ -130,12 +129,28 @@ function parse_stmts($stmts, &$vars, &$classes, &$functions, $file, $ns = '', $c
 			case 'PhpParser\Node\Expr\FuncCall':
 				parse_call($stmt, $vars, $functions, $file, $ns);
 				break;
+			case 'PhpParser\Node\Expr\StaticCall':
+				parse_static_call($stmt, $vars, $classes, $file, $ns);
+				break;
 			case 'PhpParser\Node\Expr\MethodCall':
 				parse_method_call($stmt, $vars, $classes, $file, $class);
 				break;
 			case 'PhpParser\Node\Stmt\Return_':
-				parse_exprs(array($stmt->expr), $vars, $file, $class);
+				if ($stmt->expr) {
+					parse_exprs(array($stmt->expr), $vars, $file, $class);
+				}
 				break;
+			case 'PhpParser\Node\Stmt\TryCatch':
+				parse_stmts($stmt->stmts, $vars, $classes, $functions, $file, $ns, $class);
+				break;
+			case 'PhpParser\Node\Expr\AssignOp\Concat':
+			case 'PhpParser\Node\Expr\AssignOp\Plus':
+			case 'PhpParser\Node\Expr\AssignOp\Minus':
+			case 'PhpParser\Node\Expr\AssignOp\Mul':
+			case 'PhpParser\Node\Expr\AssignOp\Div':
+				parse_exprs(array($stmt->var), $vars, $file, $class);
+				parse_exprs(array($stmt->expr), $vars, $file, $class);
+				break;	
 			case 'PhpParser\Node\Expr\PostInc':
 			case 'PhpParser\Node\Expr\PostDec':
 				parse_exprs(array($stmt->var), $vars, $file, $class);
@@ -171,17 +186,13 @@ function parse_exprs($exprs, &$vars, $file, $class = null) {
 
 function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '', $class = null) {
 	$var = $assign->var;
-	if ($var instanceof PhpParser\Node\Expr\Variable) {
-		parse_variable($var, $vars, $file);
-		$name = $var->name;
-	}
+	parse_variable($var, $vars, $file);
+	$name = $var->name;
 	$c = get_class($assign->expr);
 	switch ($c) {
 		case 'PhpParser\Node\Expr\New_':
 			foreach ($assign->expr->args as $arg) {
-				if ($arg->value instanceof PhpParser\Node\Expr\Variable) {
-					parse_variable($arg->value, $vars, $file);
-				}
+				parse_variable($arg->value, $vars, $file);
 			}
 			switch (get_class($assign->expr->class)) {
 				case 'PhpParser\Node\Name\FullyQualified':
@@ -199,6 +210,7 @@ function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '', $c
 			break;
 		case 'PhpParser\Node\Expr\FuncCall':
 			parse_call($assign->expr, $vars, $functions, $file, $ns);
+			break;
 		default:
 			parse_exprs(array($assign->expr), $vars, $file, $class);
 			if ($vars[$name]) {
@@ -218,9 +230,8 @@ function parse_function_definition($fun, &$functions, $file, $ns = '') {
 }
 
 
-function parse_function($fun, &$functions, $file) {
+function parse_function($fun, $classes, $functions, $file) {
 	$vars = array();
-	$classes = array();
 	
 	foreach ($fun->params as $param) {
 		parse_variable($param, $vars);
@@ -231,11 +242,21 @@ function parse_function($fun, &$functions, $file) {
 }
 
 function parse_variable($var, &$vars) {
-	$n = $var->name;
-	if (!$vars[$n]) {
-		$vars[$n]['v'] = $var;
+	$c = get_class($var);
+	switch ($c) {
+		case 'PhpParser\Node\Expr\ArrayDimFetch':
+			parse_variable($var->var, $vars);
+			parse_variable($var->dim, $vars);
+			break;
+		case 'PhpParser\Node\Param':
+		case 'PhpParser\Node\Expr\Variable':
+			$n = $var->name;
+			if (!$vars[$n]) {
+				$vars[$n]['v'] = $var;
+			}
+			$vars[$n]['c']++;
+			break;
 	}
-	$vars[$n]['c']++;
 }
 
 function parse_call($call, &$vars, $functions, $file, $ns) {
@@ -255,6 +276,49 @@ function parse_call($call, &$vars, $functions, $file, $ns) {
 				break;
 		}
 	}
+}
+
+function parse_static_call($call, &$vars, $classes, $file, $ns) {
+	$class_name = $ns . strtolower(implode('\\',$call->class->parts));
+	$func_name = strtolower($call->name);
+	foreach ($call->args as $arg) {
+		$c = get_class($arg->value);
+		switch ($c) {
+			case 'PhpParser\Node\Expr\Variable':
+				parse_variable($arg->value, $vars);
+				break;
+			default:
+				parse_exprs(array($arg), $vars, $file);
+				break;
+		}
+	}
+
+	$class = $classes[$class_name];
+	if ($class) {
+		$methods = $class['methods'];
+		$m = $methods[$func_name];
+		if (!($m instanceof PhpParser\Node\Stmt\ClassMethod)) {
+			print_error("Call to undefined method {$class_name}::{$func_name}()", $file, $call->getAttribute('startLine', -1));
+		}
+	} else {
+		if (class_exists($class_name)) {
+			$methods = get_class_methods($class_name);
+			$n = 0;
+			foreach ($methods as $m) {
+				if ($func_name == strtolower($m)) {
+					$n++;
+					break;
+				}
+			}
+			if (!$n) {
+				//调用方法不存在
+				print_error("Call to undefined method {$class_name}::{$func_name}()", $file, $call->getAttribute('startLine', -1));
+			}
+		} else {
+			//调用未知类型对象的方法
+		}
+	}
+
 }
 
 function parse_method_call($call, &$vars, $classes, $file, $class = null) {
