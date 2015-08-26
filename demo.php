@@ -56,7 +56,7 @@ class A {
 	}
 
 	public static function g($x) {
-		$y = $x + 1;
+		$y = $x + 1 + 1;
 		return $y;
 	}
 }

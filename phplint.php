@@ -1,6 +1,6 @@
 #!/usr/bin/php
 <?php
-require(__DIR__ . '/lib/bootstrap.php');
+require(__DIR__ . '/lib/PHP-Parser/lib/bootstrap.php');
 
 $vars = array();
 $classes = array();
@@ -126,6 +126,7 @@ function parse_assign($assign, &$vars, $classes, $functions, $file, $ns = '') {
 		case 'PhpParser\Node\Expr\FuncCall':
 			parse_call($assign->expr, $vars, $functions, $file, $ns);
 		case 'PhpParser\Node\Expr\Array_':
+		case 'PhpParser\Node\Expr\BinaryOp\Plus':
 		default:
 			$vars[$name]['t'] = '';
 			break;
